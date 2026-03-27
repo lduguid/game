@@ -14,6 +14,7 @@
 #define SDL_MAIN_USE_CALLBACKS 1  /* use the callbacks instead of main() */
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
+#include "sine_math.hpp"
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -28,21 +29,9 @@ const MainCallbackRateHint g_main_callback_rate_hint;
 
 namespace sine_scatter {
 
-float sine_mapping(float frequency, float base_frequency, float amplitude, float phase,
-                   float min_radius, float max_radius)
-{
-  float angle = 2.0f * SDL_PI_F * (frequency / base_frequency) + phase;
-  return amplitude * SDL_sinf(angle) + (max_radius - min_radius);
-}
-
-/** Per-animation parameters (each Instance can use different values). */
+/** Per-animation: math in `series`, plus phase speed and rendering-only fields. */
 struct Config {
-  int num_samples = 100;
-  float freq_step = 0.1f;
-  float base_frequency = 1.0f;
-  float amplitude = 5.0f;
-  float min_radius = 1.0f;
-  float max_radius = 10.0f;
+  sine_math::SeriesParams series;
   float phase_speed = 2.0f;
   float dot_extent = 2.0f;
   int trail_len = 20;
@@ -60,53 +49,29 @@ public:
   explicit Instance(Config config)
       : config_(std::move(config))
   {
-    trail_.resize(static_cast<size_t>(config_.num_samples) * static_cast<size_t>(config_.trail_len));
+    trail_.resize(static_cast<size_t>(config_.series.num_samples) * static_cast<size_t>(config_.trail_len));
   }
 
   void draw(SDL_Renderer* renderer, const SDL_FRect& plot_rect, float time_seconds, bool draw_axes = true)
   {
-    const int n = config_.num_samples;
+    const int n = config_.series.num_samples;
     const int tl = config_.trail_len;
-    const float freq_min = 0.0f;
-    const float freq_max = (float)(n - 1) * config_.freq_step;
-    const float phase = std::fmod(time_seconds * config_.phase_speed, 2.0f * SDL_PI_F);
+    const float phase = sine_math::phase_at_time(time_seconds, config_.phase_speed);
 
     const float plot_left = plot_rect.x;
     const float plot_top = plot_rect.y;
     const float plot_w = plot_rect.w;
     const float plot_h = plot_rect.h;
 
-    std::vector<float> radii(static_cast<size_t>(n));
+    const sine_math::PlotRect pr{plot_left, plot_top, plot_w, plot_h};
+    std::vector<float> radii = sine_math::compute_radii(config_.series, phase);
+    const sine_math::RadiusRange range = sine_math::compute_radius_range(radii);
+    std::vector<sine_math::Point2f> plot_points = sine_math::compute_plot_points(config_.series, radii, pr, range);
+
     std::vector<SDL_FPoint> points(static_cast<size_t>(n));
-
-    float r_min = 0.0f;
-    float r_max = 0.0f;
     for (int i = 0; i < n; ++i) {
-      float frequency = (float)i * config_.freq_step;
-      float r = sine_mapping(frequency, config_.base_frequency, config_.amplitude, phase, config_.min_radius,
-                             config_.max_radius);
-      radii[static_cast<size_t>(i)] = r;
-      if (i == 0 || r < r_min) {
-        r_min = r;
-      }
-      if (i == 0 || r > r_max) {
-        r_max = r;
-      }
-    }
-
-    float r_span = r_max - r_min;
-    if (r_span <= 0.0f) {
-      r_span = 1.0f;
-    }
-
-    for (int i = 0; i < n; ++i) {
-      float frequency = (float)i * config_.freq_step;
-      float t_x = (frequency - freq_min) / (freq_max - freq_min);
-      float px = plot_left + t_x * plot_w;
-      float t_y = (radii[static_cast<size_t>(i)] - r_min) / r_span;
-      float py = plot_top + (1.0f - t_y) * plot_h;
-      points[static_cast<size_t>(i)].x = px;
-      points[static_cast<size_t>(i)].y = py;
+      points[static_cast<size_t>(i)].x = plot_points[static_cast<size_t>(i)].x;
+      points[static_cast<size_t>(i)].y = plot_points[static_cast<size_t>(i)].y;
     }
 
     if (draw_axes) {
@@ -166,12 +131,12 @@ namespace {
 sine_scatter::Config make_config_a()
 {
   sine_scatter::Config c;
-  c.num_samples = 100;
-  c.freq_step = 0.1f;
-  c.base_frequency = 10.0f;
-  c.amplitude = 5.0f;
-  c.min_radius = 1.0f;
-  c.max_radius = 10.0f;
+  c.series.num_samples = 100;
+  c.series.freq_step = 0.1f;
+  c.series.base_frequency = 10.0f;
+  c.series.amplitude = 5.0f;
+  c.series.min_radius = 1.0f;
+  c.series.max_radius = 10.0f;
   c.phase_speed = 2.0f;
   c.dot_extent = 2.0f;
   c.trail_len = 20;
@@ -187,12 +152,12 @@ sine_scatter::Config make_config_a()
 sine_scatter::Config make_config_b()
 {
   sine_scatter::Config c;
-  c.num_samples = 100;
-  c.freq_step = 0.1f;
-  c.base_frequency = 3.0f;
-  c.amplitude = 4.0f;
-  c.min_radius = 1.0f;
-  c.max_radius = 10.0f;
+  c.series.num_samples = 100;
+  c.series.freq_step = 0.1f;
+  c.series.base_frequency = 3.0f;
+  c.series.amplitude = 4.0f;
+  c.series.min_radius = 1.0f;
+  c.series.max_radius = 10.0f;
   c.phase_speed = 3.5f;
   c.dot_extent = 2.0f;
   c.trail_len = 20;
