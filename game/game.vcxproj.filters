@@ -5,6 +5,7 @@
     <ClCompile Include="sine_math.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="camera.hpp" />
     <ClInclude Include="sine_math.hpp" />
   </ItemGroup>
 </Project>
