@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cmath>
 #include <cstring>
+#include <random>
 #include <vector>
 
 namespace {
@@ -296,6 +297,93 @@ static bool g_show_3d_axes = true;
 static GLuint g_tilemap_tex = 0;
 static float g_bg_scroll_u = 0.f;
 
+namespace {
+struct TwinkleStar {
+  float x = 0.f;
+  float y = 0.f;
+  float z = 0.f;
+  float phase = 0.f;
+  float period_sec = 2.f;
+  float size_peak = 4.f;
+  float r = 1.f;
+  float g = 1.f;
+  float b = 1.f;
+};
+
+static constexpr int kTwinkleStarCount = 112;
+static std::vector<TwinkleStar> g_twinkle_stars;
+static std::mt19937 g_twinkle_rng{std::random_device{}()};
+
+static void twinkle_star_respawn(TwinkleStar& s)
+{
+  std::uniform_real_distribution<float> ux(-118.f, 118.f);
+  std::uniform_real_distribution<float> uy(-34.f, 54.f);
+  std::uniform_real_distribution<float> uz(-50.f, -6.f);
+  std::uniform_real_distribution<float> u_period(1.15f, 3.6f);
+  std::uniform_real_distribution<float> u_peak(2.2f, 8.5f);
+  std::uniform_real_distribution<float> u_tint(0.82f, 1.f);
+  s.x = ux(g_twinkle_rng);
+  s.y = uy(g_twinkle_rng);
+  s.z = uz(g_twinkle_rng);
+  s.period_sec = u_period(g_twinkle_rng);
+  s.size_peak = u_peak(g_twinkle_rng);
+  const float tr = u_tint(g_twinkle_rng);
+  const float tg = u_tint(g_twinkle_rng);
+  const float tb = u_tint(g_twinkle_rng);
+  s.r = 0.88f + 0.12f * tr;
+  s.g = 0.88f + 0.12f * tg;
+  s.b = 0.92f + 0.08f * tb;
+}
+
+static void init_twinkle_stars()
+{
+  g_twinkle_stars.resize(static_cast<size_t>(kTwinkleStarCount));
+  std::uniform_real_distribution<float> u_phase(0.f, 1.f);
+  for (auto& s : g_twinkle_stars) {
+    twinkle_star_respawn(s);
+    s.phase = u_phase(g_twinkle_rng);
+  }
+}
+
+static void update_twinkle_stars(float dt)
+{
+  for (auto& s : g_twinkle_stars) {
+    if (s.period_sec <= 1e-4f) {
+      s.period_sec = 1.f;
+    }
+    s.phase += dt / s.period_sec;
+    if (s.phase >= 1.f) {
+      s.phase = std::fmod(s.phase, 1.f);
+      twinkle_star_respawn(s);
+    }
+  }
+}
+
+/** Additive-ish points between background and waves; envelope sin(pi*phase) for grow then fade. */
+static void draw_twinkle_stars_3d()
+{
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+  constexpr float kPi = 3.14159265f;
+  for (const auto& s : g_twinkle_stars) {
+    const float u = std::sin(kPi * s.phase);
+    if (u <= 0.004f) {
+      continue;
+    }
+    const float a = u * u;
+    const float sz = 0.6f + (s.size_peak - 0.6f) * u;
+    glPointSize(SDL_max(1.f, sz));
+    glColor4f(s.r * u, s.g * u, s.b * u, a);
+    glBegin(GL_POINTS);
+    glVertex3f(s.x, s.y, s.z);
+    glEnd();
+  }
+  glPointSize(1.f);
+  glDisable(GL_BLEND);
+  glColor3f(1.f, 1.f, 1.f);
+}
+}  // namespace
+
 static void init_tilemap_texture()
 {
   constexpr int res = 64;
@@ -454,6 +542,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[])
   glClearColor(0.09f, 0.09f, 0.11f, 1.f);
 
   init_tilemap_texture();
+  init_twinkle_stars();
 
   g_last_ticks = SDL_GetTicks();
   return SDL_APP_CONTINUE;
@@ -543,6 +632,8 @@ SDL_AppResult SDL_AppIterate(void* appstate)
     glEnable(GL_DEPTH_TEST);
     apply_camera_gl(g_camera);
     draw_3d_scrolling_background(dt);
+    update_twinkle_stars(dt);
+    draw_twinkle_stars_3d();
     if (g_split_layout) {
       g_sine_a.draw_gl_3d(t_sec, -3.5f, 0.f, g_show_3d_axes);
       g_sine_b.draw_gl_3d(t_sec, 3.5f, 0.f, false);
