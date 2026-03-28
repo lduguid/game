@@ -293,6 +293,94 @@ static bool g_split_layout = true;
 /** 3D only: F3 toggles origin X/Y/Z axis lines drawn with the first wave. */
 static bool g_show_3d_axes = true;
 
+static GLuint g_tilemap_tex = 0;
+static float g_bg_scroll_u = 0.f;
+
+static void init_tilemap_texture()
+{
+  constexpr int res = 64;
+  std::vector<unsigned char> pix(static_cast<size_t>(res * res * 3));
+  for (int y = 0; y < res; ++y) {
+    for (int x = 0; x < res; ++x) {
+      float fx = x / static_cast<float>(res - 1);
+      float fy = y / static_cast<float>(res - 1);
+      float wave = 0.5f + 0.5f * std::sin((fx * 10.f + fy * 6.5f) * 3.1415926f);
+      int cx = (x / 8) & 1;
+      int cy = (y / 8) & 1;
+      float chk = (cx ^ cy) != 0 ? 0.9f : 0.55f;
+      unsigned char r = static_cast<unsigned char>(28 + wave * chk * 95);
+      unsigned char g = static_cast<unsigned char>(32 + wave * chk * 85);
+      unsigned char b = static_cast<unsigned char>(48 + wave * chk * 115);
+      size_t i = (static_cast<size_t>(y * res + x)) * 3u;
+      pix[i] = r;
+      pix[i + 1] = g;
+      pix[i + 2] = b;
+    }
+  }
+  glGenTextures(1, &g_tilemap_tex);
+  glBindTexture(GL_TEXTURE_2D, g_tilemap_tex);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, res, res, 0, GL_RGB, GL_UNSIGNED_BYTE, pix.data());
+  glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+/** Large XY plane behind the graph; UV tiling + texture-matrix scroll (smooth rightward drift). */
+static void draw_3d_scrolling_background(float dt)
+{
+  if (g_tilemap_tex == 0) {
+    return;
+  }
+  g_bg_scroll_u += dt * 0.44f;
+
+  glEnable(GL_TEXTURE_2D);
+  glBindTexture(GL_TEXTURE_2D, g_tilemap_tex);
+  glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+  glColor3f(0.5f, 0.52f, 0.58f);
+
+  glMatrixMode(GL_TEXTURE);
+  glLoadIdentity();
+  glTranslatef(-g_bg_scroll_u, 0.f, 0.f);
+  glMatrixMode(GL_MODELVIEW);
+
+  glBegin(GL_QUADS);
+  const float z = -52.f;
+  const float x0 = -130.f;
+  const float x1 = 130.f;
+  const float y0 = -40.f;
+  const float y1 = 60.f;
+  const float tu = 32.f;
+  const float tv = 12.f;
+  glTexCoord2f(0.f, 0.f);
+  glVertex3f(x0, y0, z);
+  glTexCoord2f(tu, 0.f);
+  glVertex3f(x1, y0, z);
+  glTexCoord2f(tu, tv);
+  glVertex3f(x1, y1, z);
+  glTexCoord2f(0.f, tv);
+  glVertex3f(x0, y1, z);
+  glEnd();
+
+  glMatrixMode(GL_TEXTURE);
+  glLoadIdentity();
+  glMatrixMode(GL_MODELVIEW);
+
+  glBindTexture(GL_TEXTURE_2D, 0);
+  glDisable(GL_TEXTURE_2D);
+  glColor3f(1.f, 1.f, 1.f);
+}
+
+static void shutdown_tilemap_texture()
+{
+  if (g_tilemap_tex != 0 && window != nullptr && gl_context != nullptr) {
+    SDL_GL_MakeCurrent(window, gl_context);
+    glDeleteTextures(1, &g_tilemap_tex);
+    g_tilemap_tex = 0;
+  }
+}
+
 static void setup_viewport_3d(int w, int h)
 {
   if (h <= 0) {
@@ -364,6 +452,8 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[])
 
   glEnable(GL_DEPTH_TEST);
   glClearColor(0.09f, 0.09f, 0.11f, 1.f);
+
+  init_tilemap_texture();
 
   g_last_ticks = SDL_GetTicks();
   return SDL_APP_CONTINUE;
@@ -452,6 +542,7 @@ SDL_AppResult SDL_AppIterate(void* appstate)
   if (g_view_3d) {
     glEnable(GL_DEPTH_TEST);
     apply_camera_gl(g_camera);
+    draw_3d_scrolling_background(dt);
     if (g_split_layout) {
       g_sine_a.draw_gl_3d(t_sec, -3.5f, 0.f, g_show_3d_axes);
       g_sine_b.draw_gl_3d(t_sec, 3.5f, 0.f, false);
@@ -502,6 +593,7 @@ void SDL_AppQuit(void* appstate, SDL_AppResult result)
   if (window) {
     SDL_SetWindowRelativeMouseMode(window, false);
   }
+  shutdown_tilemap_texture();
   if (gl_context) {
     SDL_GL_DestroyContext(gl_context);
     gl_context = nullptr;
